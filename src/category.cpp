@@ -1049,7 +1049,7 @@ condition category::get_children_condition(row_handle rh, const category &childC
 
 			if (parentValue.empty())
 				cond = std::move(cond) and key(childKey) == null;
-			else if (link->m_parent_keys.size() > 1 and not mandatoryChildFields.contains(childKey))
+			else if (link->m_parent_keys.size() > 1 and mandatoryChildFields.find(childKey) == mandatoryChildFields.end())
 				cond = std::move(cond) and (key(childKey) == parentValue.text() or key(childKey) == null);
 			else
 				cond = std::move(cond) and key(childKey) == parentValue.text();
