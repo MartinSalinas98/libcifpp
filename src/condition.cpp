@@ -67,7 +67,7 @@ namespace detail
 		m_icase = is_column_type_uchar(c, m_item_tag);
 
 		if (c.get_cat_validator() != nullptr and
-			c.key_field_indices().contains(m_item_ix) and
+			c.key_field_indices().find(m_item_ix) != c.key_field_indices().end() and
 			c.key_field_indices().size() == 1)
 		{
 			m_single_hit = c[{ { m_item_tag, m_value } }];
