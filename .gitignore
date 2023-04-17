@@ -8,3 +8,11 @@ msvc/
 src/revision.hpp
 test/test-create_sugar_?.cif
 Testing/
+*.so*
+exports.hpp
+*.pc
+*.dic
+*.cmake
+libcifpp.conf
+components.cif
+update-libcifpp-data
