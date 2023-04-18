@@ -26,6 +26,7 @@
 
 #include "cif++/category.hpp"
 #include "cif++/condition.hpp"
+#include "cif++/file.hpp"
 
 namespace cif
 {
@@ -67,10 +68,12 @@ namespace detail
 		m_icase = is_column_type_uchar(c, m_item_tag);
 
 		if (c.get_cat_validator() != nullptr and
-			c.key_field_indices().find(m_item_ix) != c.key_field_indices().end() and
 			c.key_field_indices().size() == 1)
 		{
-			m_single_hit = c[{ { m_item_tag, m_value } }];
+			const auto field_keys = c.key_field_indices();
+			if (field_keys.find(m_item_ix) != field_keys.end()) {
+				m_single_hit = c[{ { m_item_tag, m_value } }];
+			}
 		}
 
 		return this;
