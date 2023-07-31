@@ -27,6 +27,7 @@
 #include <cassert>
 
 #include <array>
+#include <charconv>
 #include <iostream>
 #include <iomanip>
 #include <fstream>
@@ -169,7 +170,7 @@ class SymopParser
 	}
 
 	Token m_lookahead;
-	int m_nr;
+	int m_nr = -1;
 
 	std::string m_s;
 	std::string::const_iterator m_p, m_e;
@@ -230,14 +231,15 @@ int main(int argc, char* const argv[])
 
 	try
 	{
-		if (argc != 3)
+		if (argc != 4)
 		{
-			std::cerr << "Usage symop-map-generator <input-file> <output-file>" << std::endl;
+			std::cerr << "Usage symop-map-generator <syminfo.lib-file> <symop.lib-file> < <output-file>" << std::endl;
 			exit(1);
 		}
 
-		fs::path input(argv[1]);
-		fs::path output(argv[2]);
+		fs::path syminfolib(argv[1]);
+		fs::path symoplib(argv[2]);
+		fs::path output(argv[3]);
 		
 		tmpFile = output.parent_path() / (output.filename().string() + ".tmp");
 
@@ -261,22 +263,51 @@ int main(int argc, char* const argv[])
 		};
 
 		std::map<int,SymInfoBlock> symInfo;
-		int symopnr, mysymnr = 10000;
 
-		std::ifstream file(input);
+		std::ifstream file(symoplib);
+		if (not file.is_open())
+			throw std::runtime_error("Could not open symop.lib file");
+
+		std::string line;
+		int sgnr = 0;
+		int rnr = 0;
+
+		while (getline(file, line))
+		{
+			if (line.empty())
+				continue;
+			
+			if (std::isdigit(line[0]))	// start of new spacegroup
+			{
+				auto r = std::from_chars(line.data(), line.data() + line.length(), sgnr);
+				if (r.ec != std::errc())
+					throw std::runtime_error("Error parsing symop.lib file");
+				rnr = 1;
+				continue;
+			}
+
+			if (not std::isspace(line[0]) or sgnr == 0)
+				throw std::runtime_error("Error parsing symop.lib file");
+			
+			SymopParser p;
+			data.emplace_back(sgnr, rnr, p.parse(line));
+			++rnr;
+		}
+
+		file.close();
+
+		file.open(syminfolib);
 		if (not file.is_open())
 			throw std::runtime_error("Could not open syminfo.lib file");
 
 		enum class State { skip, spacegroup } state = State::skip;
-
-		std::string line;
 
 		const std::regex rx(R"(^symbol +(Hall|xHM|old) +'(.+?)'(?: +'(.+?)')?$)"),
 			rx2(R"(symbol ccp4 (\d+))");;
 
 		SymInfoBlock cur = {};
 
-		std::vector<std::array<int,15>> symops, cenops;
+		// std::vector<std::array<int,15>> symops, cenops;
 
 		while (getline(file, line))
 		{
@@ -286,9 +317,7 @@ int main(int argc, char* const argv[])
 					if (line == "begin_spacegroup")
 					{
 						state = State::spacegroup;
-						symopnr = 1;
-						++mysymnr;
-						cur = { mysymnr };
+						cur = {};
 					}
 					break;
 				
@@ -314,34 +343,34 @@ int main(int argc, char* const argv[])
 						if (nr != 0)
 							cur.nr = nr;
 					}
-					else if (line.compare(0, 6, "symop ") == 0)
-					{
-						SymopParser p;
-						symops.emplace_back(p.parse(line.substr(6)));
-					}
-					else if (line.compare(0, 6, "cenop ") == 0)
-					{
-						SymopParser p;
-						cenops.emplace_back(p.parse(line.substr(6)));
-					}
+					// else if (line.compare(0, 6, "symop ") == 0)
+					// {
+					// 	SymopParser p;
+					// 	symops.emplace_back(p.parse(line.substr(6)));
+					// }
+					// else if (line.compare(0, 6, "cenop ") == 0)
+					// {
+					// 	SymopParser p;
+					// 	cenops.emplace_back(p.parse(line.substr(6)));
+					// }
 					else if (line == "end_spacegroup")
 					{
-						for (auto& cenop: cenops)
-						{
-							for (auto symop: symops)
-							{
-								symop = move_symop(symop, cenop);
+					// 	for (auto& cenop: cenops)
+					// 	{
+					// 		for (auto symop: symops)
+					// 		{
+					// 			symop = move_symop(symop, cenop);
 
-								data.emplace_back(cur.nr, symopnr, symop);
-								++symopnr;
-							}
-						}
+					// 			data.emplace_back(cur.nr, symopnr, symop);
+					// 			++symopnr;
+					// 		}
+					// 	}
 
 						symInfo.emplace(cur.nr, cur);
 						state = State::skip;
 
-						symops.clear();
-						cenops.clear();
+					// 	symops.clear();
+					// 	cenops.clear();
 					}
 					break;
 				}
@@ -383,10 +412,10 @@ const space_group kSpaceGroups[] =
 			old = '"' + old + '"' + std::string(20 - old.length(), ' ');
 			xHM = '"' + xHM + '"' + std::string(30 - xHM.length(), ' ');
 
-			for (std::string::size_type p = Hall.length(); p > 0; --p)
+			for (auto p = Hall.begin(); p != Hall.end(); ++p)
 			{
-				if (Hall[p - 1] == '"')
-					Hall.insert(p - 1, "\\", 1);
+				if (*p == '"')
+					p = Hall.insert(p, '\\') + 1;
 			}
 
 			Hall = '"' + Hall + '"' + std::string(40 - Hall.length(), ' ');

@@ -1,4 +1,21 @@
+Version 5.1.1
+- Added missing include <compare> in symmetry.hpp
+- Added empty() to matrix
+
+Version 5.1
+- New parser, optimised for speed
+- Fix in unique ID generator
+
+Version 5.0.10
+- Fix in progress_bar, was using too much CPU
+- Optimised mmCIF parser
+
 Version 5.0.9
+- Fix in dihedral angle calculations
+- Added create_water to model
+- Writing twin domain info in PDB files and more PDB fixes
+- remove_atom improved (remove struct_conn records)
+- Added a specialisation for category::find1<std::optional>
 - fix memory leak in category
 
 Version 5.0.8

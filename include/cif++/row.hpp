@@ -112,12 +112,12 @@ class row : public std::vector<item_value>
 
 	item_value* get(uint16_t ix)
 	{
-		return ix < size() ? &at(ix) : nullptr;
+		return ix < size() ? &data()[ix] : nullptr;
 	}
 
 	const item_value* get(uint16_t ix) const
 	{
-		return ix < size() ? &at(ix) : nullptr;
+		return ix < size() ? &data()[ix] : nullptr;
 	}
 
   private:
@@ -210,14 +210,14 @@ class row_handle
 		return detail::get_row_result<C...>(*this, { get_column_ix(columns)... });
 	}
 
-	template <typename... Ts, typename... C, std::enable_if_t<sizeof...(Ts) == sizeof...(C), int> = 0>
+	template <typename... Ts, typename... C, std::enable_if_t<sizeof...(Ts) == sizeof...(C) and sizeof...(C) != 1, int> = 0>
 	std::tuple<Ts...> get(C... columns) const
 	{
 		return detail::get_row_result<Ts...>(*this, { get_column_ix(columns)... });
 	}
 
 	template <typename T>
-	T get(const char *column)
+	T get(const char *column) const
 	{
 		return operator[](get_column_ix(column)).template as<T>();
 	}

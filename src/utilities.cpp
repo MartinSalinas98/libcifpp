@@ -31,6 +31,7 @@
 #include <atomic>
 #include <cassert>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <deque>
 #include <fstream>
@@ -39,11 +40,10 @@
 #include <iostream>
 #include <map>
 #include <mutex>
-#include <regex>
 #include <sstream>
 #include <thread>
 
-#if not defined(_MSC_VER)
+#if not defined(_WIN32)
 #include <sys/ioctl.h>
 #include <termios.h>
 #endif
@@ -68,7 +68,7 @@ std::string get_version_nr()
 
 // --------------------------------------------------------------------
 
-#ifdef _MSC_VER
+#ifdef _WIN32
 }
 #include <Windows.h>
 #include <libloaderapi.h>
@@ -135,41 +135,55 @@ std::string get_executable_path()
 
 // --------------------------------------------------------------------
 
-struct ProgressImpl
+struct progress_bar_impl
 {
-	ProgressImpl(int64_t inMax, const std::string &inAction)
-		: mMax(inMax)
-		, mConsumed(0)
-		, mAction(inAction)
-		, mMessage(inAction)
-		, mThread(std::bind(&ProgressImpl::Run, this))
+	progress_bar_impl(int64_t inMax, const std::string &inAction)
+		: m_max_value(inMax)
+		, m_consumed(0)
+		, m_action(inAction)
+		, m_message(inAction)
+		, m_thread(std::bind(&progress_bar_impl::run, this))
 	{
 	}
 
-	void Run();
-	void Stop()
-	{
-		mStop = true;
-		if (mThread.joinable())
-			mThread.join();
-	}
+	progress_bar_impl(const progress_bar_impl&) = delete;
+	progress_bar_impl &operator=(const progress_bar_impl &) = delete;
 
-	void PrintProgress();
-	void PrintDone();
+	~progress_bar_impl();
 
-	int64_t mMax;
-	std::atomic<int64_t> mConsumed;
-	int64_t mLastConsumed = 0;
-	int mSpinnerIndex = 0;
-	std::string mAction, mMessage;
-	std::mutex mMutex;
-	std::thread mThread;
-	std::chrono::time_point<std::chrono::system_clock>
-		mStart = std::chrono::system_clock::now();
-	bool mStop = false;
+	void run();
+
+	void consumed(int64_t n);
+	void progress(int64_t p);
+	void message(const std::string &msg);
+
+	void print_progress();
+	void print_done();
+
+	using time_point = std::chrono::time_point<std::chrono::system_clock>;
+
+	int64_t m_max_value;
+	std::atomic<int64_t> m_consumed;
+	int64_t m_last_consumed = 0;
+	int m_spinner_index = 0;
+	std::string m_action, m_message;
+	std::mutex m_mutex;
+	std::thread m_thread;
+	time_point m_start = std::chrono::system_clock::now();
+	time_point m_last = std::chrono::system_clock::now();
+	bool m_stop = false;
 };
 
-void ProgressImpl::Run()
+progress_bar_impl::~progress_bar_impl()
+{
+	using namespace std::literals;
+	assert(m_thread.joinable());
+
+	m_stop = true;
+	m_thread.join();
+}
+
+void progress_bar_impl::run()
 {
 	using namespace std::literals;
 
@@ -177,22 +191,25 @@ void ProgressImpl::Run()
 
 	try
 	{
-		for (;;)
+		while (not m_stop)
 		{
-			std::this_thread::sleep_for(2s);
+			auto now = std::chrono::system_clock::now();
 
-			std::unique_lock lock(mMutex);
-
-			if (mStop or mConsumed == mMax)
-				break;
-
-			auto elapsed = std::chrono::system_clock::now() - mStart;
-
-			if (elapsed < std::chrono::seconds(5))
+			if (now - m_start < 2s or now - m_last < 100ms)
+			{
+				std::this_thread::sleep_for(10ms);
 				continue;
+			}
 
-			PrintProgress();
+			std::lock_guard lock(m_mutex);
+
+			if (not printedAny and isatty(STDOUT_FILENO))
+				std::cout << "\e[?25l";
+
+			print_progress();
+
 			printedAny = true;
+			m_last = std::chrono::system_clock::now();
 		}
 	}
 	catch (...)
@@ -200,93 +217,93 @@ void ProgressImpl::Run()
 	}
 
 	if (printedAny)
-		PrintDone();
+	{
+		print_done();
+		if (isatty(STDOUT_FILENO))
+			std::cout << "\e[?25h";
+	}
 }
 
-void ProgressImpl::PrintProgress()
+void progress_bar_impl::consumed(int64_t n)
 {
-	//	const char* kBlocks[] = {
-	//		" ",				// 0
-	//		u8"\u258F",			// 1
-	//		u8"\u258E",			// 2
-	//		u8"\u258D",			// 3
-	//		u8"\u258C",			// 4
-	//		u8"\u258B",			// 5
-	//		u8"\u258A",			// 6
-	//		u8"\u2589",			// 7
-	//		u8"\u2588",			// 8
-	//	};
+	m_consumed += n;
+}
 
+void progress_bar_impl::progress(int64_t p)
+{
+	m_consumed = p;
+}
+
+void progress_bar_impl::message(const std::string &msg)
+{
+	std::unique_lock lock(m_mutex);
+	m_message = msg;
+}
+
+const char* kSpinner[] = {
+	// "▉", "▊", "▋", "▌", "▍", "▎", "▏", "▎", "▍", "▌", "▋", "▊", "▉"
+	".", "o", "O", "0", "O", "o", ".", " "
+};
+const size_t kSpinnerCount = sizeof(kSpinner) / sizeof(char*);
+const uint32_t kMinBarWidth = 40, kMinMsgWidth = 12;
+
+void progress_bar_impl::print_progress()
+{
 	const char *kBlocks[] = {
-		" ", // 0
-		" ", // 1
-		" ", // 2
-		"-", // 3
-		"-", // 4
-		"-", // 5
-		"=", // 6
-		"=", // 7
-		"=", // 8
+		// "▯", // 0
+		// "▮", // 1
+		"=",
+		"-"
 	};
 
 	uint32_t width = get_terminal_width();
 
-	std::string msg;
-	msg.reserve(width + 1);
-	if (mMessage.length() <= 20)
-	{
-		msg = mMessage;
-		if (msg.length() < 20)
-			msg.append(20 - msg.length(), ' ');
-	}
+	float progress = static_cast<float>(m_consumed) / m_max_value;
+	
+	if (width < kMinBarWidth)
+		std::cout << (100 * progress) << '%' << std::endl;
 	else
-		msg = mMessage.substr(0, 17) + "...";
-
-	msg += " |";
-
-	int64_t consumed = mConsumed;
-	float progress = static_cast<float>(consumed) / mMax;
-	int pi = static_cast<int>(std::ceil(progress * 33 * 8));
-	//	int tw = width - 28;
-	//	int twd = static_cast<int>(tw * progress + 0.5f);
-	//	msg.append(twd, '=');
-	//	msg.append(tw - twd, ' ');
-
-	for (int i = 0; i < 33; ++i)
 	{
-		if (pi <= 0)
-			msg += kBlocks[0];
-		else if (pi >= 8)
-			msg += kBlocks[8];
+		uint32_t bar_width = 7 * width / 10;
+		uint32_t pct_width = 7;
+		uint32_t msg_width = width - bar_width - pct_width - 1;
+
+		if (msg_width < kMinMsgWidth)
+		{
+			bar_width += kMinMsgWidth - msg_width;
+			msg_width = kMinMsgWidth;
+		}
+
+		std::ostringstream msg;
+
+		if (m_message.length() <= msg_width)
+		{
+			msg << m_message;
+			if (m_message.length() < msg_width)
+				msg << std::string(msg_width - m_message.length(), ' ');
+		}
 		else
-			msg += kBlocks[pi];
-		pi -= 8;
+			msg << m_message.substr(0, msg_width - 3) << "...";
+
+		msg << ' ';
+
+		uint32_t pi = static_cast<uint32_t>(std::ceil(progress * bar_width));
+
+		for (uint32_t i = 0; i < bar_width; ++i)
+			msg << kBlocks[i > pi ? 1 : 0];
+
+		msg << ' ';
+
+		msg << std::setw(3) << static_cast<int>(std::ceil(progress * 100)) << "% ";
+
+		auto now = std::chrono::system_clock::now();
+		m_spinner_index = (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_start).count() / 200) % kSpinnerCount;
+
+		msg << kSpinner[m_spinner_index];
+
+		std::cout << '\r' << msg.str();
+		std::cout.flush();
 	}
-
-	msg.append("| ");
-
-	const char kSpinner[] = {' ', '.', 'o', 'O', '0', 'O', 'o', '.'};
-	const size_t kSpinnerCount = sizeof(kSpinner);
-
-	if (mLastConsumed < consumed)
-	{
-		mLastConsumed = consumed;
-		mSpinnerIndex = (mSpinnerIndex + 1) % kSpinnerCount;
-	}
-
-	const char spinner[2] = {kSpinner[mSpinnerIndex], 0};
-	msg.append(spinner);
-
-	//	int perc = static_cast<int>(100 * progress);
-	//	if (perc < 100)
-	//		msg += ' ';
-	//	if (perc < 10)
-	//		msg += ' ';
-	//	msg += to_string(perc);
-	//	msg += '%';
-
-	std::cout << '\r' << msg;
-	std::cout.flush();
 }
 
 namespace
@@ -325,12 +342,12 @@ namespace
 
 } // namespace
 
-void ProgressImpl::PrintDone()
+void progress_bar_impl::print_done()
 {
-	std::chrono::duration<double> elapsed = std::chrono::system_clock::now() - mStart;
+	std::chrono::duration<double> elapsed = std::chrono::system_clock::now() - m_start;
 
 	std::ostringstream msgstr;
-	msgstr << mAction << " done in " << elapsed << " seconds";
+	msgstr << m_action << " done in " << elapsed << " seconds";
 	auto msg = msgstr.str();
 
 	uint32_t width = get_terminal_width();
@@ -341,46 +358,34 @@ void ProgressImpl::PrintDone()
 	std::cout << '\r' << msg << std::endl;
 }
 
-Progress::Progress(int64_t inMax, const std::string &inAction)
+progress_bar::progress_bar(int64_t inMax, const std::string &inAction)
 	: m_impl(nullptr)
 {
 	if (isatty(STDOUT_FILENO) and VERBOSE >= 0)
-		m_impl = new ProgressImpl(inMax, inAction);
+		m_impl = new progress_bar_impl(inMax, inAction);
 }
 
-Progress::~Progress()
+progress_bar::~progress_bar()
 {
-	if (m_impl != nullptr)
-		m_impl->Stop();
-
 	delete m_impl;
 }
 
-void Progress::consumed(int64_t inConsumed)
-{
-	if (m_impl != nullptr and
-		(m_impl->mConsumed += inConsumed) >= m_impl->mMax)
-	{
-		m_impl->Stop();
-	}
-}
-
-void Progress::progress(int64_t inProgress)
-{
-	if (m_impl != nullptr and
-		(m_impl->mConsumed = inProgress) >= m_impl->mMax)
-	{
-		m_impl->Stop();
-	}
-}
-
-void Progress::message(const std::string &inMessage)
+void progress_bar::consumed(int64_t inConsumed)
 {
 	if (m_impl != nullptr)
-	{
-		std::unique_lock lock(m_impl->mMutex);
-		m_impl->mMessage = inMessage;
-	}
+		m_impl->consumed(inConsumed);
+}
+
+void progress_bar::progress(int64_t inProgress)
+{
+	if (m_impl != nullptr)
+		m_impl->progress(inProgress);
+}
+
+void progress_bar::message(const std::string &inMessage)
+{
+	if (m_impl != nullptr)
+		m_impl->message(inMessage);
 }
 
 } // namespace cif
@@ -406,11 +411,19 @@ struct rsrc_imp
 };
 } // namespace mrsrc
 
-#if _MSC_VER
+#if _WIN32
 
-extern "C" CIFPP_EXPORT const mrsrc::rsrc_imp *gResourceIndexDefault[1] = {};
-extern "C" CIFPP_EXPORT const char *gResourceDataDefault[1] = {};
-extern "C" CIFPP_EXPORT const char *gResourceNameDefault[1] = {};
+#if __MINGW32__
+
+extern "C" __attribute__((weak, alias("gResourceIndexDefault"))) const mrsrc::rsrc_imp gResourceIndex[];
+extern "C" __attribute__((weak, alias("gResourceDataDefault"))) const char gResourceData[];
+extern "C" __attribute__((weak, alias("gResourceNameDefault"))) const char gResourceName[];
+
+#else
+
+extern "C" const mrsrc::rsrc_imp *gResourceIndexDefault[1] = {};
+extern "C" const char *gResourceDataDefault[1] = {};
+extern "C" const char *gResourceNameDefault[1] = {};
 
 extern "C" const mrsrc::rsrc_imp gResourceIndex[];
 extern "C" const char gResourceData[];
@@ -419,6 +432,8 @@ extern "C" const char gResourceName[];
 #pragma comment(linker, "/alternatename:gResourceIndex=gResourceIndexDefault")
 #pragma comment(linker, "/alternatename:gResourceData=gResourceDataDefault")
 #pragma comment(linker, "/alternatename:gResourceName=gResourceNameDefault")
+
+#endif
 
 #else
 extern const __attribute__((weak)) mrsrc::rsrc_imp gResourceIndex[];
@@ -822,12 +837,12 @@ namespace cif
 
 // --------------------------------------------------------------------
 
-class ResourcePool
+class resource_pool
 {
   public:
-	static ResourcePool &instance()
+	static resource_pool &instance()
 	{
-		static std::unique_ptr<ResourcePool> s_instance(new ResourcePool);
+		static std::unique_ptr<resource_pool> s_instance(new resource_pool);
 		return *s_instance;
 	}
 
@@ -857,7 +872,7 @@ class ResourcePool
 	std::unique_ptr<std::istream> load(fs::path name);
 
   private:
-	ResourcePool();
+	resource_pool();
 
 	std::unique_ptr<std::ifstream> open(fs::path &p)
 	{
@@ -883,7 +898,7 @@ class ResourcePool
 	std::deque<fs::path> mDirs;
 };
 
-ResourcePool::ResourcePool()
+resource_pool::resource_pool()
 {
 #if defined(DATA_DIR)
 	pushDir(DATA_DIR);
@@ -900,7 +915,7 @@ ResourcePool::ResourcePool()
 #endif
 }
 
-std::unique_ptr<std::istream> ResourcePool::load(fs::path name)
+std::unique_ptr<std::istream> resource_pool::load(fs::path name)
 {
 	std::unique_ptr<std::istream> result;
 	std::error_code ec;
@@ -909,6 +924,9 @@ std::unique_ptr<std::istream> ResourcePool::load(fs::path name)
 
 	if (mLocalResources.count(name.string()))
 		result = open(mLocalResources[name.string()]);
+
+	if (fs::exists(p, ec) and not ec)
+		result = open(p);
 
 	for (auto di = mDirs.begin(); not result and di != mDirs.end(); ++di)
 	{
@@ -932,17 +950,17 @@ std::unique_ptr<std::istream> ResourcePool::load(fs::path name)
 
 void add_data_directory(std::filesystem::path dataDir)
 {
-	ResourcePool::instance().pushDir(dataDir);
+	resource_pool::instance().pushDir(dataDir);
 }
 
 void add_file_resource(const std::string &name, std::filesystem::path dataFile)
 {
-	ResourcePool::instance().pushAlias(name, dataFile);
+	resource_pool::instance().pushAlias(name, dataFile);
 }
 
 std::unique_ptr<std::istream> load_resource(std::filesystem::path name)
 {
-	return ResourcePool::instance().load(name);
+	return resource_pool::instance().load(name);
 }
 
 } // namespace cif

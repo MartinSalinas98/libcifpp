@@ -31,6 +31,7 @@
 #include <array>
 #include <cmath>
 #include <complex>
+#include <cstdint>
 #include <functional>
 #include <valarray>
 
@@ -320,7 +321,7 @@ class quaternion_type
 
 	constexpr operator bool() const
 	{
-		return operator!=({});
+		return a != 0 or b != 0 or c != 0 or d != 0;
 	}
 
   private:
@@ -718,7 +719,6 @@ template <int N>
 class spherical_dots
 {
   public:
-
 	constexpr static int P = 2 * N * 1;
 
 	using array_type = typename std::array<point, P>;

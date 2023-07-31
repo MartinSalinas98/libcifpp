@@ -216,6 +216,14 @@ class atom
 		set_location(loc);
 	}
 
+	/// \brief rotate the coordinates of this atom by \a q around point \a p
+	void rotate(quaternion q, point p)
+	{
+		auto loc = get_location();
+		loc.rotate(q, p);
+		set_location(loc);
+	}
+
 	/// \brief Translate and rotate the position of this atom by \a t and \a q
 	void translate_and_rotate(point t, quaternion q)
 	{
@@ -653,37 +661,6 @@ class branch : public std::vector<sugar>
 	std::string m_asym_id, m_entity_id;
 };
 
-// // --------------------------------------------------------------------
-// // file is a reference to the data stored in e.g. the cif file.
-// // This object is not copyable.
-
-// class File : public file
-// {
-//   public:
-// 	File() {}
-
-// 	// File(const std::filesystem::path &path)
-// 	// {
-// 	// 	load(path);
-// 	// }
-
-// 	// File(const char *data, size_t length)
-// 	// {
-// 	// 	load(data, length);
-// 	// }
-
-// 	File(const File &) = delete;
-// 	File &operator=(const File &) = delete;
-
-// 	// void load(const std::filesystem::path &p) override;
-// 	// void save(const std::filesystem::path &p) override;
-
-// 	// using file::load;
-// 	// using file::save;
-
-// 	datablock &data() { return front(); }
-// };
-
 // --------------------------------------------------------------------
 
 enum class StructureOpenOptions
@@ -691,7 +668,7 @@ enum class StructureOpenOptions
 	SkipHydrogen = 1 << 0
 };
 
-inline bool operator&(StructureOpenOptions a, StructureOpenOptions b)
+constexpr inline bool operator&(StructureOpenOptions a, StructureOpenOptions b)
 {
 	return static_cast<int>(a) bitand static_cast<int>(b);
 }
@@ -744,6 +721,7 @@ class structure
 
 	const std::vector<residue> &non_polymers() const { return m_non_polymers; }
 
+	bool has_atom_id(const std::string &id) const;
 	atom get_atom_by_id(const std::string &id) const;
 	// atom getAtomByLocation(point pt, float maxDistance) const;
 
@@ -838,6 +816,12 @@ class structure
 	/// \param atoms		The array of sets of item data containing the data for the atoms.
 	/// \return				The newly create asym ID
 	std::string create_non_poly(const std::string &entity_id, std::vector<row_initializer> atoms);
+
+	/// \brief Create a new water with atom constructed from info in \a atom_info
+	/// This method creates a new atom record filled with info from the info.
+	///
+	/// \param atom			The set of item data containing the data for the atoms.
+	void create_water(row_initializer atom);
 
 	/// \brief Create a new and empty (sugar) branch
 	branch &create_branch();
