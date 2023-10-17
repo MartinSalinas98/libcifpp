@@ -28,6 +28,7 @@
 
 #include "cif++/exports.hpp"
 
+#include <cstdint>
 #include <array>
 #include <cmath>
 #include <complex>

@@ -26,6 +26,7 @@
 
 #include "cif++/point.hpp"
 
+#include <cstdint>
 #include <cassert>
 #include <random>
 
