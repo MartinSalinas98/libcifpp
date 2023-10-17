@@ -56,7 +56,7 @@ std::string to_string(bond_type bondType)
 	throw std::invalid_argument("Invalid bondType");
 }
 
-bond_type from_string(const std::string &bondType)
+bond_type parse_bond_type_from_string(const std::string &bondType)
 {
 	if (cif::iequals(bondType, "sing"))
 		return bond_type::sing;
@@ -75,6 +75,28 @@ bond_type from_string(const std::string &bondType)
 	if (cif::iequals(bondType, "pi"))
 		return bond_type::pi;
 	throw std::invalid_argument("Invalid bondType: " + bondType);
+}
+
+std::string to_string(stereo_config_type stereoConfig)
+{
+	switch (stereoConfig)
+	{
+		case stereo_config_type::N: return "N";
+		case stereo_config_type::R: return "R";
+		case stereo_config_type::S: return "S";
+	}
+	throw std::invalid_argument("Invalid stereoConfig");
+}
+
+stereo_config_type parse_stereo_config_from_string(const std::string &stereoConfig)
+{
+	if (cif::iequals(stereoConfig, "N"))
+		return stereo_config_type::N;
+	if (cif::iequals(stereoConfig, "R"))
+		return stereo_config_type::R;
+	if (cif::iequals(stereoConfig, "S"))
+		return stereo_config_type::S;
+	throw std::invalid_argument("Invalid stereoConfig: " + stereoConfig);
 }
 
 // --------------------------------------------------------------------
@@ -126,11 +148,12 @@ compound::compound(cif::datablock &db)
 	for (auto row : chemCompAtom)
 	{
 		compound_atom atom;
-		std::string type_symbol;
-		cif::tie(atom.id, type_symbol, atom.charge, atom.aromatic, atom.leaving_atom, atom.stereo_config, atom.x, atom.y, atom.z) =
+		std::string type_symbol, stereo_config;
+		cif::tie(atom.id, type_symbol, atom.charge, atom.aromatic, atom.leaving_atom, stereo_config, atom.x, atom.y, atom.z) =
 			row.get("atom_id", "type_symbol", "charge", "pdbx_aromatic_flag", "pdbx_leaving_atom_flag", "pdbx_stereo_config",
 				"model_Cartn_x", "model_Cartn_y", "model_Cartn_z");
 		atom.type_symbol = atom_type_traits(type_symbol).type();
+		atom.stereo_config = parse_stereo_config_from_string(stereo_config);
 		m_atoms.push_back(std::move(atom));
 	}
 
@@ -140,7 +163,7 @@ compound::compound(cif::datablock &db)
 		compound_bond bond;
 		std::string valueOrder;
 		cif::tie(bond.atom_id[0], bond.atom_id[1], valueOrder, bond.aromatic, bond.stereo_config) = row.get("atom_id_1", "atom_id_2", "value_order", "pdbx_aromatic_flag", "pdbx_stereo_config");
-		bond.type = from_string(valueOrder);
+		bond.type = parse_bond_type_from_string(valueOrder);
 		m_bonds.push_back(std::move(bond));
 	}
 }
@@ -186,7 +209,7 @@ compound::compound(cif::datablock &db, const std::string &id, const std::string 
 		else
 		{
 			if (cif::VERBOSE > 0)
-				std::cerr << "Unimplemented chem_comp_bond.type " << btype << " in " << id << std::endl;
+				std::cerr << "Unimplemented chem_comp_bond.type " << btype << " in " << id << '\n';
 			bond.type = bond_type::sing;
 		}
 		m_bonds.push_back(std::move(bond));
@@ -443,15 +466,15 @@ compound_factory_impl::compound_factory_impl(const fs::path &file, std::shared_p
 
 			if (not cifFile.is_valid())
 			{
-				std::cerr << "The components file " << file << " is not valid" << std::endl;
+				std::cerr << "The components file " << file << " is not valid\n";
 				if (cif::VERBOSE < 1)
-					std::cerr << "(use --verbose to see why)" << std::endl;
+					std::cerr << "(use --verbose to see why)\n";
 			}
 		}
 		catch (const std::exception &e)
 		{
-			std::cerr << "When trying to load the components file " << file << " there was an exception:" << std::endl
-					  << e.what() << std::endl;
+			std::cerr << "When trying to load the components file " << file << " there was an exception:\n"
+					  << e.what() << '\n';
 		}
 
 		for (auto &db : cifFile)
@@ -493,7 +516,7 @@ compound *CCD_compound_factory_impl::create(const std::string &id)
 		ccd = cif::load_resource("components.cif");
 		if (not ccd)
 		{
-			std::cerr << "Could not locate the CCD components.cif file, please make sure the software is installed properly and/or use the update-libcifpp-data to fetch the data." << std::endl;
+			std::cerr << "Could not locate the CCD components.cif file, please make sure the software is installed properly and/or use the update-libcifpp-data to fetch the data.\n";
 			return nullptr;
 		}
 	}
@@ -553,7 +576,7 @@ compound *CCD_compound_factory_impl::create(const std::string &id)
 	}
 
 	if (result == nullptr and cif::VERBOSE > 0)
-		std::cerr << "Could not locate compound " << id << " in the CCD components file" << std::endl;
+		std::cerr << "Could not locate compound " << id << " in the CCD components file\n";
 
 	return result;
 }
@@ -678,13 +701,13 @@ compound_factory::compound_factory()
 	if (ccd)
 		m_impl = std::make_shared<CCD_compound_factory_impl>(m_impl);
 	else if (cif::VERBOSE > 0)
-		std::cerr << "CCD components.cif file was not found" << std::endl;
+		std::cerr << "CCD components.cif file was not found\n";
 
 	const char *clibd_mon = getenv("CLIBD_MON");
 	if (clibd_mon != nullptr and fs::is_directory(clibd_mon))
 		m_impl = std::make_shared<CCP4_compound_factory_impl>(clibd_mon, m_impl);
 	else if (cif::VERBOSE > 0)
-		std::cerr << "CCP4 monomers library not found, CLIBD_MON is not defined" << std::endl;
+		std::cerr << "CCP4 monomers library not found, CLIBD_MON is not defined\n";
 }
 
 compound_factory::~compound_factory()

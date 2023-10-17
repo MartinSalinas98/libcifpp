@@ -43,11 +43,6 @@
 #include <sstream>
 #include <thread>
 
-#if not defined(_WIN32)
-#include <sys/ioctl.h>
-#include <termios.h>
-#endif
-
 namespace fs = std::filesystem;
 
 // --------------------------------------------------------------------
@@ -86,25 +81,10 @@ uint32_t get_terminal_width()
     return csbi.srWindow.Right - csbi.srWindow.Left + 1;
 }
 
-std::string GetExecutablePath()
-{
-	WCHAR buffer[4096];
-
-	DWORD n = ::GetModuleFileNameW(nullptr, buffer, sizeof(buffer) / sizeof(WCHAR));
-	if (n == 0)
-		throw std::runtime_error("could not get exe path");
-
-	std::wstring ws(buffer);
-
-	// convert from utf16 to utf8
-	std::wstring_convert<std::codecvt_utf8<wchar_t>> conv1;
-	std::string u8str = conv1.to_bytes(ws);
-
-	return u8str;
-}
-
 #else
 
+#include <sys/ioctl.h>
+#include <termios.h>
 #include <limits.h>
 
 uint32_t get_terminal_width()
@@ -118,17 +98,6 @@ uint32_t get_terminal_width()
 		result = w.ws_col;
 	}
 	return result;
-}
-
-std::string get_executable_path()
-{
-	using namespace std::literals;
-
-	// This used to be PATH_MAX, but lets simply assume 1024 is enough...
-	char path[1024] = "";
-	if (readlink("/proc/self/exe", path, sizeof(path)) == -1)
-		throw std::runtime_error("could not get exe path "s + strerror(errno));
-	return {path};
 }
 
 #endif
@@ -204,7 +173,7 @@ void progress_bar_impl::run()
 			std::lock_guard lock(m_mutex);
 
 			if (not printedAny and isatty(STDOUT_FILENO))
-				std::cout << "\e[?25l";
+				std::cout << "\x1b[?25l";
 
 			print_progress();
 
@@ -220,7 +189,7 @@ void progress_bar_impl::run()
 	{
 		print_done();
 		if (isatty(STDOUT_FILENO))
-			std::cout << "\e[?25h";
+			std::cout << "\x1b[?25h";
 	}
 }
 
@@ -241,10 +210,15 @@ void progress_bar_impl::message(const std::string &msg)
 }
 
 const char* kSpinner[] = {
-	// "▉", "▊", "▋", "▌", "▍", "▎", "▏", "▎", "▍", "▌", "▋", "▊", "▉"
-	".", "o", "O", "0", "O", "o", ".", " "
+	// ".", "o", "O", "0", "O", "o", ".", " "
+	// "⢄", "⢂", "⢁", "⡁", "⡈", "⡐", "⡠"
+	 ".", "o", "O", "0", "@", "*", " "
 };
+
 const size_t kSpinnerCount = sizeof(kSpinner) / sizeof(char*);
+
+const int kSpinnerTimeInterval = 100;
+
 const uint32_t kMinBarWidth = 40, kMinMsgWidth = 12;
 
 void progress_bar_impl::print_progress()
@@ -297,7 +271,7 @@ void progress_bar_impl::print_progress()
 		msg << std::setw(3) << static_cast<int>(std::ceil(progress * 100)) << "% ";
 
 		auto now = std::chrono::system_clock::now();
-		m_spinner_index = (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_start).count() / 200) % kSpinnerCount;
+		m_spinner_index = (std::chrono::duration_cast<std::chrono::milliseconds>(now - m_start).count() / kSpinnerTimeInterval) % kSpinnerCount;
 
 		msg << kSpinner[m_spinner_index];
 

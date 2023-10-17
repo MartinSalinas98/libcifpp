@@ -670,9 +670,13 @@ void category::set_validator(const validator *v, datablock &db)
 
 			if (missing.empty())
 				m_index = new category_index(this);
-			else if (VERBOSE > 0)
-				std::cerr << "Cannot construct index since the key field" << (missing.size() > 1 ? "s" : "") << " "
-							<< cif::join(missing, ", ") + " in " + m_name + " " + (missing.size() == 1 ? "is" : "are") << " missing" << std::endl;
+			else
+			{
+				std::ostringstream msg;
+				msg << "Cannot construct index since the key field" << (missing.size() > 1 ? "s" : "") << " "
+							<< cif::join(missing, ", ") << " in " << m_name << " " << (missing.size() == 1 ? "is" : "are") << " missing\n";
+				throw std::runtime_error(msg.str());
+			}
 		}
 	}
 	else
@@ -719,7 +723,7 @@ bool category::is_valid() const
 	if (empty())
 	{
 		if (VERBOSE > 2)
-			std::cerr << "Skipping validation of empty category " << m_name << std::endl;
+			std::cerr << "Skipping validation of empty category " << m_name << '\n';
 		return true;
 	}
 
@@ -871,17 +875,17 @@ bool category::validate_links() const
 		{
 			result = false;
 
-			std::cerr << "Links for " << link.v->m_link_group_label << " are incomplete" << std::endl
-					<< "  There are " << missing << " items in " << m_name << " that don't have matching parent items in " << parent->m_name << std::endl;
+			std::cerr << "Links for " << link.v->m_link_group_label << " are incomplete\n"
+					<< "  There are " << missing << " items in " << m_name << " that don't have matching parent items in " << parent->m_name << '\n';
 			
 			if (VERBOSE)
 			{
-				std::cerr << "showing first " << first_missing_rows.size() <<  " rows" << std::endl
-						<< std::endl;
+				std::cerr << "showing first " << first_missing_rows.size() <<  " rows\n"
+						<< '\n';
 
 				first_missing_rows.write(std::cerr, link.v->m_child_keys, false);
 
-				std::cerr << std::endl;
+				std::cerr << '\n';
 			}
 		}
 	}
@@ -917,25 +921,30 @@ condition category::get_parents_condition(row_handle rh, const category &parentC
 
 	condition result;
 
-	for (auto &link : m_validator->get_links_for_child(m_name))
+	auto links = m_validator->get_links_for_child(m_name);
+	links.erase(remove_if(links.begin(), links.end(), [n=parentCat.m_name](auto &l) { return l->m_parent_category != n; }), links.end());
+
+	if (not links.empty())
 	{
-		if (link->m_parent_category != parentCat.m_name)
-			continue;
-
-		condition cond;
-
-		for (size_t ix = 0; ix < link->m_child_keys.size(); ++ix)
+		for (auto &link : links)
 		{
-			auto childValue = rh[link->m_child_keys[ix]];
+			condition cond;
 
-			if (childValue.empty())
-				continue;
+			for (size_t ix = 0; ix < link->m_child_keys.size(); ++ix)
+			{
+				auto childValue = rh[link->m_child_keys[ix]];
 
-			cond = std::move(cond) and key(link->m_parent_keys[ix]) == childValue.text();
+				if (childValue.empty())
+					continue;
+
+				cond = std::move(cond) and key(link->m_parent_keys[ix]) == childValue.text();
+			}
+
+			result = std::move(result) or std::move(cond);
 		}
-
-		result = std::move(result) or std::move(cond);
 	}
+	else if (cif::VERBOSE > 0)
+		std::cerr << "warning: no child to parent links were found for child " << parentCat.name() << " and parent " << name() << '\n';
 
 	return result;
 }
@@ -952,30 +961,35 @@ condition category::get_children_condition(row_handle rh, const category &childC
 	if (childCatValidator != nullptr)
 		mandatoryChildFields = childCatValidator->m_mandatory_fields;
 
-	for (auto &link : m_validator->get_links_for_parent(m_name))
+	auto links = m_validator->get_links_for_parent(m_name);
+	links.erase(remove_if(links.begin(), links.end(), [n=childCat.m_name](auto &l) { return l->m_child_category != n; }), links.end());
+
+	if (not links.empty())
 	{
-		if (link->m_child_category != childCat.m_name)
-			continue;
-
-		condition cond;
-
-		for (size_t ix = 0; ix < link->m_parent_keys.size(); ++ix)
+		for (auto &link : links)
 		{
-			auto childKey = link->m_child_keys[ix];
-			auto parentKey = link->m_parent_keys[ix];
+			condition cond;
 
-			auto parentValue = rh[parentKey];
+			for (size_t ix = 0; ix < link->m_parent_keys.size(); ++ix)
+			{
+				auto childKey = link->m_child_keys[ix];
+				auto parentKey = link->m_parent_keys[ix];
 
-			if (parentValue.empty())
-				cond = std::move(cond) and key(childKey) == null;
-			else if (link->m_parent_keys.size() > 1 and not mandatoryChildFields.contains(childKey))
-				cond = std::move(cond) and (key(childKey) == parentValue.text() or key(childKey) == null);
-			else
-				cond = std::move(cond) and key(childKey) == parentValue.text();
+				auto parentValue = rh[parentKey];
+
+				if (parentValue.empty())
+					cond = std::move(cond) and key(childKey) == null;
+				else if (link->m_parent_keys.size() > 1 and not mandatoryChildFields.contains(childKey))
+					cond = std::move(cond) and (key(childKey) == parentValue.text() or key(childKey) == null);
+				else
+					cond = std::move(cond) and key(childKey) == parentValue.text();
+			}
+
+			result = std::move(result) or std::move(cond);
 		}
-
-		result = std::move(result) or std::move(cond);
 	}
+	else if (cif::VERBOSE > 0)
+		std::cerr << "warning: no parent to child links were found for parent " << name() << " and child " << childCat.name() << '\n';
 
 	return result;
 }
@@ -1210,9 +1224,9 @@ void category::erase_orphans(condition &&cond, category &parent)
 		{
 			category c(m_name);
 			c.emplace(r);
-			std::cerr << "Removing orphaned record: " << std::endl
-						<< c << std::endl
-						<< std::endl;
+			std::cerr << "Removing orphaned record: \n"
+						<< c << '\n'
+						<< '\n';
 
 		}
 		
@@ -1379,7 +1393,7 @@ void category::update_value(const std::vector<row_handle> &rows, std::string_vie
 
 				// cannot update this...
 				if (cif::VERBOSE > 0)
-					std::cerr << "Cannot update child " << childCat->m_name << "." << childTag << " with value " << value << std::endl;
+					std::cerr << "Cannot update child " << childCat->m_name << "." << childTag << " with value " << value << '\n';
 			}
 
 			// finally, update the children
@@ -1476,8 +1490,8 @@ void category::update_value(row *row, uint16_t column, std::string_view value, b
 
 			// if (cif::VERBOSE > 2)
 			// {
-			// 	std::cerr << "Parent: " << linked->mParentcategory << " Child: " << linked->m_child_category << std::endl
-			// 			  << cond << std::endl;
+			// 	std::cerr << "Parent: " << linked->mParentcategory << " Child: " << linked->m_child_category << '\n'
+			// 			  << cond << '\n';
 			// }
 
 			// Now, suppose there are already rows in child that conform to the new value,
@@ -1506,7 +1520,7 @@ void category::update_value(row *row, uint16_t column, std::string_view value, b
 			if (not rows_n.empty())
 			{
 				if (cif::VERBOSE > 0)
-					std::cerr << "Will not rename in child category since there are already rows that link to the parent" << std::endl;
+					std::cerr << "Will not rename in child category since there are already rows that link to the parent\n";
 
 				continue;
 			}
@@ -1867,7 +1881,7 @@ void category::write(std::ostream &os, const std::vector<uint16_t> &order, bool 
 
 	if (needLoop)
 	{
-		os << "loop_" << '\n';
+		os << "loop_\n";
 
 		std::vector<size_t> columnWidths(m_columns.size());
 
@@ -1976,13 +1990,13 @@ void category::write(std::ostream &os, const std::vector<uint16_t> &order, bool 
 			if (s.empty())
 				s = "?";
 
-			size_t l = s.length();
+			size_t l2 = s.length();
 
 			if (not sac_parser::is_unquoted_string(s))
-				l += 2;
+				l2 += 2;
 
-			if (width < l)
-				width = l;
+			if (width < l2)
+				width = l2;
 		}
 
 		for (uint16_t cix : order)
@@ -2014,7 +2028,7 @@ void category::write(std::ostream &os, const std::vector<uint16_t> &order, bool 
 		}
 	}
 
-	os << "# " << '\n';
+	os << "# \n";
 }
 
 bool category::operator==(const category &rhs) const
@@ -2027,7 +2041,7 @@ bool category::operator==(const category &rhs) const
 //	set<std::string> tagsA(a.fields()), tagsB(b.fields());
 //	
 //	if (tagsA != tagsB)
-//		std::cout << "Unequal number of fields" << std::endl;
+//		std::cout << "Unequal number of fields\n";
 
 	const category_validator *catValidator = nullptr;
 

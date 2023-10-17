@@ -25,7 +25,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # set the project name
-project(cifpp VERSION 5.1.1 LANGUAGES CXX)
+project(libcifpp VERSION 5.2.2 LANGUAGES CXX)
 
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
@@ -35,8 +35,9 @@ include(CheckIncludeFiles)
 include(CheckLibraryExists)
 include(CMakePackageConfigHelpers)
 include(CheckCXXSourceCompiles)
-include(Dart)
 include(GenerateExportHeader)
+include(CTest)
+include(CMakeDependentOption)
 
 set(CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_STANDARD 20)
@@ -50,14 +51,22 @@ elseif(MSVC)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /W4")
 endif()
 
-# Building shared libraries?
-option(BUILD_SHARED_LIBS "Build a shared library instead of a static one" OFF)
+# Build documentation?
+option(BUILD_DOCUMENTATION "Build the documentation" OFF)
 
 # We do not want to write an export file for all our symbols...
 set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 
 # Optionally build a version to be installed inside CCP4
 option(BUILD_FOR_CCP4 "Build a version to be installed in CCP4" OFF)
+
+# Building shared libraries?
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+	cmake_policy(SET CMP0127 NEW)
+	cmake_dependent_option(BUILD_SHARED_LIBS "Build a shared library instead of a static one" OFF "NOT (BUILD_FOR_CCP4 AND WIN32)" ON)
+else()
+	option(BUILD_SHARED_LIBS "Build a shared library instead of a static one" OFF)
+endif()
 
 # Lots of code depend on the availability of the components.cif file
 option(CIFPP_DOWNLOAD_CCD "Download the CCD file components.cif during installation" ON)
@@ -81,8 +90,6 @@ else()
 endif()
 
 # Unit tests
-option(ENABLE_TESTING "Build test exectuables" OFF)
-
 if(BUILD_FOR_CCP4)
 	if("$ENV{CCP4}" STREQUAL "" OR NOT EXISTS $ENV{CCP4})
 		message(FATAL_ERROR "A CCP4 built was requested but CCP4 was not sourced")
@@ -98,33 +105,33 @@ if(BUILD_FOR_CCP4)
 	endif()
 endif()
 
+if(WIN32)
+    if(${CMAKE_SYSTEM_VERSION} GREATER_EQUAL 10) # Windows 10
+        add_definitions(-D _WIN32_WINNT=0x0A00)
+    elseif(${CMAKE_SYSTEM_VERSION} EQUAL 6.3) # Windows 8.1
+        add_definitions(-D _WIN32_WINNT=0x0603)
+    elseif(${CMAKE_SYSTEM_VERSION} EQUAL 6.2) # Windows 8
+        add_definitions(-D _WIN32_WINNT=0x0602)
+    elseif(${CMAKE_SYSTEM_VERSION} EQUAL 6.1) # Windows 7
+        add_definitions(-D _WIN32_WINNT=0x0601)
+    elseif(${CMAKE_SYSTEM_VERSION} EQUAL 6.0) # Windows Vista
+        add_definitions(-D _WIN32_WINNT=0x0600)
+    else() # Windows XP (5.1)
+        add_definitions(-D _WIN32_WINNT=0x0501)
+    endif()
+
+	add_definitions(-DNOMINMAX)
+endif()
+
 if(MSVC)
-	# make msvc standards compliant...
-	add_compile_options(/permissive-)
+    # make msvc standards compliant...
+    add_compile_options(/permissive-)
 
-	macro(get_WIN32_WINNT version)
-		if(CMAKE_SYSTEM_VERSION)
-			set(ver ${CMAKE_SYSTEM_VERSION})
-			string(REGEX MATCH "^([0-9]+).([0-9])" ver ${ver})
-			string(REGEX MATCH "^([0-9]+)" verMajor ${ver})
-
-			# Check for Windows 10, b/c we'll need to convert to hex 'A'.
-			if("${verMajor}" MATCHES "10")
-				set(verMajor "A")
-				string(REGEX REPLACE "^([0-9]+)" ${verMajor} ver ${ver})
-			endif()
-
-			# Remove all remaining '.' characters.
-			string(REPLACE "." "" ver ${ver})
-
-			# Prepend each digit with a zero.
-			string(REGEX REPLACE "([0-9A-Z])" "0\\1" ver ${ver})
-			set(${version} "0x${ver}")
-		endif()
-	endmacro()
-
-	get_WIN32_WINNT(ver)
-	add_definitions(-D_WIN32_WINNT=${ver})
+	if(BUILD_SHARED_LIBS)
+		set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+	else()
+		set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+	endif()
 endif()
 
 # Libraries
@@ -197,7 +204,7 @@ endif()
 
 # Create a revision file, containing the current git version info
 include(VersionString)
-write_version_header(${PROJECT_SOURCE_DIR}/src/ "LibCIFPP")
+write_version_header(${PROJECT_SOURCE_DIR}/src/ LIB_NAME "LibCIFPP")
 
 # SymOp data table
 if(CIFPP_RECREATE_SYMOP_DATA)
@@ -238,8 +245,9 @@ set(project_sources
 
 	${PROJECT_SOURCE_DIR}/src/pdb/cif2pdb.cpp
 	${PROJECT_SOURCE_DIR}/src/pdb/pdb2cif.cpp
+	${PROJECT_SOURCE_DIR}/src/pdb/pdb_record.hpp
+	${PROJECT_SOURCE_DIR}/src/pdb/pdb2cif_remark_3.hpp
 	${PROJECT_SOURCE_DIR}/src/pdb/pdb2cif_remark_3.cpp
-	${PROJECT_SOURCE_DIR}/src/pdb/tls.cpp
 )
 
 set(project_headers
@@ -264,16 +272,17 @@ set(project_headers
 
 	${PROJECT_SOURCE_DIR}/include/cif++/model.hpp
 
+	${PROJECT_SOURCE_DIR}/include/cif++/pdb.hpp
+
 	${PROJECT_SOURCE_DIR}/include/cif++/pdb/cif2pdb.hpp
 	${PROJECT_SOURCE_DIR}/include/cif++/pdb/io.hpp
 	${PROJECT_SOURCE_DIR}/include/cif++/pdb/pdb2cif.hpp
-	${PROJECT_SOURCE_DIR}/include/cif++/pdb/pdb2cif_remark_3.hpp
 	${PROJECT_SOURCE_DIR}/include/cif++/pdb/tls.hpp
 )
 
 add_library(cifpp ${project_sources} ${project_headers} ${PROJECT_SOURCE_DIR}/src/symop_table_data.hpp)
 add_library(cifpp::cifpp ALIAS cifpp)
-generate_export_header(cifpp EXPORT_FILE_NAME cif++/exports.hpp)
+generate_export_header(cifpp EXPORT_FILE_NAME ${PROJECT_SOURCE_DIR}/include/cif++/exports.hpp)
 
 if(BOOST_REGEX)
 	target_compile_definitions(cifpp PRIVATE USE_BOOST_REGEX=1 BOOST_REGEX_STANDALONE=1)
@@ -314,11 +323,12 @@ if(CIFPP_DOWNLOAD_CCD)
 endif()
 
 # Installation directories
-set(CIFPP_DATA_DIR "${CMAKE_INSTALL_FULL_DATADIR}/libcifpp")
+set(CIFPP_DATA_DIR "${CMAKE_INSTALL_FULL_DATADIR}/libcifpp" CACHE PATH "The directory where dictionary files are stored")
 target_compile_definitions(cifpp PUBLIC DATA_DIR="${CIFPP_DATA_DIR}")
 
 if(UNIX)
-	set(CIFPP_CACHE_DIR "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/cache/libcifpp")
+	set(CIFPP_CACHE_DIR "${CMAKE_INSTALL_FULL_LOCALSTATEDIR}/cache/libcifpp"
+		CACHE PATH "The directory where the update script stores new dictionary files")
 	target_compile_definitions(cifpp PUBLIC CACHE_DIR="${CIFPP_CACHE_DIR}")
 
 	set(CIFPP_ETC_DIR "${CMAKE_INSTALL_FULL_SYSCONFDIR}")
@@ -357,12 +367,6 @@ install(
 	COMPONENT Devel
 )
 
-install(
-	FILES ${PROJECT_BINARY_DIR}/cif++/exports.hpp
-	DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cif++
-	COMPONENT Devel
-)
-
 install(FILES
 	${PROJECT_SOURCE_DIR}/rsrc/mmcif_ddl.dic
 	${PROJECT_SOURCE_DIR}/rsrc/mmcif_pdbx.dic
@@ -397,11 +401,10 @@ install(FILES
 	COMPONENT Devel
 )
 
-set(cifpp_MAJOR_VERSION ${CMAKE_PROJECT_VERSION_MAJOR})
 set_target_properties(cifpp PROPERTIES
 	VERSION ${PROJECT_VERSION}
-	SOVERSION ${cifpp_MAJOR_VERSION}
-	INTERFACE_cifpp_MAJOR_VERSION ${cifpp_MAJOR_VERSION})
+	SOVERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}"
+	INTERFACE_cifpp_MAJOR_VERSION ${PROJECT_VERSION_MAJOR})
 
 set_property(TARGET cifpp APPEND PROPERTY
 	COMPATIBLE_INTERFACE_STRING cifpp_MAJOR_VERSION
@@ -413,21 +416,7 @@ write_basic_package_version_file(
 	COMPATIBILITY AnyNewerVersion
 )
 
-# pkgconfig support
-set(prefix ${CMAKE_INSTALL_PREFIX})
-set(exec_prefix ${CMAKE_INSTALL_PREFIX})
-set(libdir ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR})
-set(includedir ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_INCLUDEDIR})
-
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/libcifpp.pc.in
-	${CMAKE_CURRENT_BINARY_DIR}/libcifpp.pc.in @ONLY)
-file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libcifpp.pc
-	INPUT ${CMAKE_CURRENT_BINARY_DIR}/libcifpp.pc.in)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libcifpp.pc DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
-
-if(ENABLE_TESTING)
-	enable_testing()
-
+if(BUILD_TESTING)
 	find_package(Boost REQUIRED)
 
 	list(APPEND CIFPP_tests unit-v2 unit-3d format model rename-compound sugar spinner)
@@ -486,6 +475,10 @@ if(CIFPP_INSTALL_UPDATE_SCRIPT)
 	endif()
 
 	target_compile_definitions(cifpp PUBLIC CACHE_DIR="${CIFPP_CACHE_DIR}")
+endif()
+
+if(BUILD_DOCUMENTATION)
+	add_subdirectory(docs)
 endif()
 
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")

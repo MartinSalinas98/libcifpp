@@ -24,8 +24,9 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "cif++.hpp"
-#include "cif++/pdb/pdb2cif_remark_3.hpp"
+#include "pdb2cif_remark_3.hpp"
+
+#include <cif++.hpp>
 
 #include <map>
 #include <set>
@@ -1042,7 +1043,7 @@ std::string Remark3Parser::nextLine()
 	}
 
 	if (cif::VERBOSE >= 2)
-		std::cerr << "RM3: " << mLine << std::endl;
+		std::cerr << "RM3: " << mLine << '\n';
 
 	return mLine;
 }
@@ -1056,7 +1057,11 @@ bool Remark3Parser::match(const char *expr, int nextState)
 	if (result)
 		mState = nextState;
 	else if (cif::VERBOSE >= 3)
-		std::cerr << cif::coloured("No match:", cif::scWHITE, cif::scRED) << " '" << expr << '\'' << std::endl;
+	{
+		using namespace colour;
+
+		std::cerr << coloured("No match:", white, red, bold) << " '" << expr << '\'' << '\n';
+	}
 
 	return result;
 }
@@ -1116,7 +1121,11 @@ float Remark3Parser::parse()
 		}
 
 		if (cif::VERBOSE >= 2)
-			std::cerr << cif::coloured("Dropping line:", cif::scWHITE, cif::scRED) << " '" << mLine << '\'' << std::endl;
+		{
+			using namespace colour;
+
+			std::cerr << coloured("Dropping line:", white, red, bold) << " '" << mLine << '\'' << '\n';
+		}
 
 		++dropped;
 	}
@@ -1168,7 +1177,7 @@ void Remark3Parser::storeCapture(const char *category, std::initializer_list<con
 			continue;
 
 		if (cif::VERBOSE >= 3)
-			std::cerr << "storing: '" << value << "' in _" << category << '.' << item << std::endl;
+			std::cerr << "storing: '" << value << "' in _" << category << '.' << item << '\n';
 
 		auto &cat = mDb[category];
 		if (cat.empty() or createNew)
@@ -1329,7 +1338,7 @@ bool Remark3Parser::parse(const std::string &expMethod, PDBRecord *r, cif::datab
 	if (line != "REFINEMENT.")
 	{
 		if (cif::VERBOSE > 0)
-			std::cerr << "Unexpected data in REMARK 3" << std::endl;
+			std::cerr << "Unexpected data in REMARK 3\n";
 		return false;
 	}
 
@@ -1341,7 +1350,7 @@ bool Remark3Parser::parse(const std::string &expMethod, PDBRecord *r, cif::datab
 	if (not std::regex_match(line, m, rxp))
 	{
 		if (cif::VERBOSE > 0)
-			std::cerr << "Expected valid PROGRAM line in REMARK 3" << std::endl;
+			std::cerr << "Expected valid PROGRAM line in REMARK 3\n";
 		return false;
 	}
 
@@ -1380,13 +1389,13 @@ bool Remark3Parser::parse(const std::string &expMethod, PDBRecord *r, cif::datab
 		catch (const std::exception &e)
 		{
 			if (cif::VERBOSE >= 0)
-				std::cerr << "Error parsing REMARK 3 with " << parser->program() << std::endl
+				std::cerr << "Error parsing REMARK 3 with " << parser->program() << '\n'
 						  << e.what() << '\n';
 			score = 0;
 		}
 
 		if (cif::VERBOSE >= 2)
-			std::cerr << "Score for " << parser->program() << ": " << score << std::endl;
+			std::cerr << "Score for " << parser->program() << ": " << score << '\n';
 
 		if (score > 0)
 		{
@@ -1422,7 +1431,7 @@ bool Remark3Parser::parse(const std::string &expMethod, PDBRecord *r, cif::datab
 		else if (cif::starts_with(program, "X-PLOR"))
 			tryParser(new XPLOR_Remark3Parser(program, expMethod, r, db));
 		else if (cif::VERBOSE > 0)
-			std::cerr << "Skipping unknown program (" << program << ") in REMARK 3" << std::endl;
+			std::cerr << "Skipping unknown program (" << program << ") in REMARK 3\n";
 	}
 
 	sort(scores.begin(), scores.end());
@@ -1431,7 +1440,7 @@ bool Remark3Parser::parse(const std::string &expMethod, PDBRecord *r, cif::datab
 	if (guessProgram)
 	{
 		if (cif::VERBOSE > 0)
-			std::cerr << "Unknown or untrusted program in REMARK 3, trying all parsers to see if there is a match" << std::endl;
+			std::cerr << "Unknown or untrusted program in REMARK 3, trying all parsers to see if there is a match\n";
 
 		tryParser(new BUSTER_TNT_Remark3Parser("BUSTER-TNT", expMethod, r, db));
 		tryParser(new CNS_Remark3Parser("CNS", expMethod, r, db));
@@ -1456,7 +1465,7 @@ bool Remark3Parser::parse(const std::string &expMethod, PDBRecord *r, cif::datab
 		auto &best = scores.front();
 
 		if (cif::VERBOSE > 0)
-			std::cerr << "Choosing " << best.parser->program() << " version '" << best.parser->version() << "' as refinement program. Score = " << best.score << std::endl;
+			std::cerr << "Choosing " << best.parser->program() << " version '" << best.parser->version() << "' as refinement program. Score = " << best.score << '\n';
 
 		auto &software = db["software"];
 		std::string program = best.parser->program();

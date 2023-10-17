@@ -1,6 +1,33 @@
+Version 5.2.2
+- Remove dependency on Eigen3 for users of libcifpp
+- Fix typos in documentation
+- Do not build latex files in documentation
+- Fixed conversion from string to integer, would fail on +2 e.g.
+- sqrt is not constexpr, thus kGoldenRatio should be const, not constexpr
+
+Version 5.2.1
+- New versionstring module
+- small fixes for generating documentation
+- correctly setting SONAME
+
+Version 5.2.0
+- With lots of documentation
+- Refactored coloured text output
+- Removed the subdirectory cif++/pdb, there now is a single
+  header file pdb.hpp for I/O of legacy PDB files.
+
+Version 5.1.3
+- Dropped pkgconfig support
+
+Version 5.1.2
+- New version string code
+- Added check for Eigen3 in cifppConfig.cmake
+
 Version 5.1.1
 - Added missing include <compare> in symmetry.hpp
 - Added empty() to matrix
+- Fix for parsing legacy PDB files with a last line that does
+  not end with a new line character.
 
 Version 5.1
 - New parser, optimised for speed
